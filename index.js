@@ -95,7 +95,7 @@ async function SendDiscordCustom(content){
 }
 
 async function checkForSignal() {
-
+await SendDiscordCustom('Bot Started')
   try {
     const url = `https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
     const res = await axios.get(url);
