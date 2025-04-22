@@ -1,20 +1,17 @@
 const axios = require('axios');
 
-const symbol = 'APTUSDT';
-const interval = '15m';
-const limit = 100;
-const atrPeriod = 1;
-const atrMultiplier = 1;
+const symbols = ['XRPUSDT', 'ICPUSDT', 'APTUSDT', 'SOLUSDT', 'BNBUSDT'];
+const interval = '1m';
+const limit = 500;
+const atrPeriod = 2;
+const atrMultiplier = 5;
 const useClose = true;
-const profitTarget = 0.5;
 const zlsmaLength = 75;
 const includeZLSMA = true;
 
-const webhookUrl = 'https://discord.com/api/webhooks/1322193887003148308/MmkpxxH5XcYYgiCnUAKI0tokZq0XwDJ9x1vU0t93KvZndhDoCIZOkeBS71mRuLnmtuL2';
+const webhookUrl = 'YOUR_DISCORD_WEBHOOK';
 
-let dir = 1;
-let longStopPrev = null;
-let shortStopPrev = null;
+const state = {};
 
 function highest(arr, len) {
   return Math.max(...arr.slice(-len));
@@ -49,7 +46,7 @@ function linreg(data, length) {
   const sumX = (length * (length - 1)) / 2;
   const sumY = data.reduce((sum, val) => sum + val, 0);
   const sumXY = data.reduce((sum, val, i) => sum + i * val, 0);
-  const sumXX = data.reduce((sum, val, i) => sum + i * i, 0);
+  const sumXX = data.reduce((sum, _, i) => sum + i * i, 0);
   const slope = (length * sumXY - sumX * sumY) / (length * sumXX - sumX * sumX);
   const intercept = (sumY - slope * sumX) / length;
   return data.map((_, i) => slope * i + intercept);
@@ -67,35 +64,23 @@ function calculateZLSMA(data, length) {
   return zlsma;
 }
 
-async function sendDiscordMessage(type, price, time) {
+async function sendDiscordMessage(type, price, time, symbol, trend) {
   const msg = {
     content: `📢 **${type} Signal**
 🕒 Time: ${time}
 💰 Price: ${price.toFixed(4)}
+📈 Trend: ${trend}
 🔗 Symbol: ${symbol}`,
   };
-
   try {
     await axios.post(webhookUrl, msg);
-    console.log(`✅ Sent ${type} signal to Discord`);
-  } catch (err) {
-    console.error('❌ Discord Webhook Error:', err.message);
-  }
-}
-async function SendDiscordCustom(content){
-  const msg = {
-    content: content
-  };
-  try {
-    await axios.post(webhookUrl, msg);
-    // console.log(`✅ Sent ${type} signal to Discord`);
+    console.log(`✅ Sent ${type} signal for ${symbol}`);
   } catch (err) {
     console.error('❌ Discord Webhook Error:', err.message);
   }
 }
 
-async function checkForSignal() {
-await SendDiscordCustom('Bot Started')
+async function checkForSignal(symbol) {
   try {
     const url = `https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
     const res = await axios.get(url);
@@ -120,31 +105,49 @@ await SendDiscordCustom('Bot Started')
     const low = useClose ? lowest(closeArr, atrPeriod) : lowest(slice.map(c => c.low), atrPeriod);
 
     let longStop = high - atr;
-    if (longStopPrev !== null && candles[i - 1].close > longStopPrev)
-      longStop = Math.max(longStop, longStopPrev);
-
     let shortStop = low + atr;
-    if (shortStopPrev !== null && candles[i - 1].close < shortStopPrev)
-      shortStop = Math.min(shortStop, shortStopPrev);
 
-    let newDir = dir;
-    if (candles[i].close > shortStopPrev) newDir = 1;
-    else if (candles[i].close < longStopPrev) newDir = -1;
+    const prevState = state[symbol] || {
+      dir: 1,
+      longStopPrev: null,
+      shortStopPrev: null
+    };
 
-    if (newDir === 1 && dir === -1) {
-      await sendDiscordMessage("BUY", candles[i].close, candles[i].time);
-    } else if (newDir === -1 && dir === 1) {
-      await sendDiscordMessage("SELL", candles[i].close, candles[i].time);
+    if (prevState.longStopPrev !== null && candles[i - 1].close > prevState.longStopPrev)
+      longStop = Math.max(longStop, prevState.longStopPrev);
+    if (prevState.shortStopPrev !== null && candles[i - 1].close < prevState.shortStopPrev)
+      shortStop = Math.min(shortStop, prevState.shortStopPrev);
+
+    let newDir = prevState.dir;
+    if (prevState.shortStopPrev !== null && candles[i].close > prevState.shortStopPrev) newDir = 1;
+    else if (prevState.longStopPrev !== null && candles[i].close < prevState.longStopPrev) newDir = -1;
+
+    const startPrice = candles[0].close;
+    const endPrice = candles[i].close;
+    const trend = endPrice > startPrice ? '📈 Upward' : '📉 Downward';
+
+    if (newDir === 1 && prevState.dir === -1) {
+      await sendDiscordMessage("BUY", endPrice, candles[i].time, symbol, trend);
+    } else if (newDir === -1 && prevState.dir === 1) {
+      await sendDiscordMessage("SELL", endPrice, candles[i].time, symbol, trend);
     }
 
-    dir = newDir;
-    longStopPrev = longStop;
-    shortStopPrev = shortStop;
+    state[symbol] = {
+      dir: newDir,
+      longStopPrev: longStop,
+      shortStopPrev: shortStop
+    };
+
   } catch (err) {
-    await SendDiscordCustom('❌ Error in signal check:', err.message)
-    console.error('❌ Error in signal check:', err.message);
+    console.error(`❌ Error for ${symbol}:`, err.message);
   }
 }
 
-setInterval(checkForSignal, 15 * 60 * 1000); // Every 15 minutes
-checkForSignal(); // Initial call
+async function runBot() {
+  console.log('🚀 Bot started...');
+  for (const symbol of symbols) {
+    checkForSignal(symbol);
+  }
+}
+setInterval(runBot, 60 * 1000); // Every 1 minute
+runBot(); // Initial call
