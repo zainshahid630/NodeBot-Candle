@@ -9,7 +9,7 @@ const useClose = true;
 const zlsmaLength = 75;
 const includeZLSMA = true;
 
-const webhookUrl = 'YOUR_DISCORD_WEBHOOK';
+const webhookUrl = 'https://discord.com/api/webhooks/1322193887003148308/MmkpxxH5XcYYgiCnUAKI0tokZq0XwDJ9x1vU0t93KvZndhDoCIZOkeBS71mRuLnmtuL2';
 
 const state = {};
 
