@@ -1,0 +1,23 @@
+{
+    "name": "mexcbot",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+      "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+      "axios": "^1.8.4",
+      "ccxt": "^4.4.40",
+      "crypto": "^1.0.1",
+      "discord.js": "^14.16.3",
+      "node-binance-api": "^1.0.3",
+      "node-fetch": "^3.3.2",
+      "technicalindicators": "^3.1.0",
+      "twilio": "^5.4.0",
+      "ws": "^8.18.1"
+    }
+  }
+  
