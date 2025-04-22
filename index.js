@@ -146,5 +146,5 @@ async function checkForSignal() {
   }
 }
 
-setInterval(checkForSignal, 1 * 60 * 1000); // Every 15 minutes
+setInterval(checkForSignal, 15 * 60 * 1000); // Every 15 minutes
 checkForSignal(); // Initial call
