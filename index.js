@@ -1,17 +1,16 @@
+
+
+
+
 const axios = require('axios');
 
 const symbols = ['XRPUSDT', 'ICPUSDT', 'APTUSDT', 'SOLUSDT', 'BNBUSDT'];
 const interval = '1m';
 const limit = 500;
 const atrPeriod = 2;
-const atrMultiplier = 10;
-const useClose = true;
-const zlsmaLength = 75;
-const includeZLSMA = true;
+const atrMultiplier = 5;
 
 const webhookUrl = 'https://discord.com/api/webhooks/1322193887003148308/MmkpxxH5XcYYgiCnUAKI0tokZq0XwDJ9x1vU0t93KvZndhDoCIZOkeBS71mRuLnmtuL2';
-
-const state = {};
 
 function highest(arr, len) {
   return Math.max(...arr.slice(-len));
@@ -42,45 +41,76 @@ function calculateATR(data, period) {
   return atr;
 }
 
-function linreg(data, length) {
-  const sumX = (length * (length - 1)) / 2;
-  const sumY = data.reduce((sum, val) => sum + val, 0);
-  const sumXY = data.reduce((sum, val, i) => sum + i * val, 0);
-  const sumXX = data.reduce((sum, _, i) => sum + i * i, 0);
-  const slope = (length * sumXY - sumX * sumY) / (length * sumXX - sumX * sumX);
-  const intercept = (sumY - slope * sumX) / length;
-  return data.map((_, i) => slope * i + intercept);
-}
+function calculateRSI(data, period = 14) {
+  let gains = 0, losses = 0;
+  const rsi = [];
 
-function calculateZLSMA(data, length) {
-  let zlsma = [];
-  for (let i = length - 1; i < data.length; i++) {
-    const slice = data.slice(i - length + 1, i + 1);
-    const lsma = linreg(slice.map(c => c.close), length);
-    const lsma2 = linreg(lsma, length);
-    const eq = lsma[lsma.length - 1] - lsma2[lsma2.length - 1];
-    zlsma.push(lsma[lsma.length - 1] + eq);
+  for (let i = 1; i <= period; i++) {
+    const diff = data[i].close - data[i - 1].close;
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
   }
-  return zlsma;
+
+  gains /= period;
+  losses /= period;
+
+  rsi.push(100 - (100 / (1 + gains / losses)));
+
+  for (let i = period + 1; i < data.length; i++) {
+    const diff = data[i].close - data[i - 1].close;
+    if (diff >= 0) {
+      gains = (gains * (period - 1) + diff) / period;
+      losses = (losses * (period - 1)) / period;
+    } else {
+      gains = (gains * (period - 1)) / period;
+      losses = (losses * (period - 1) - diff) / period;
+    }
+    rsi.push(100 - (100 / (1 + gains / losses)));
+  }
+
+  return rsi;
 }
 
-async function sendDiscordMessage(type, price, time, symbol, trend) {
-  const msg = {
-    content: `📢 **${type} Signal**
-🕒 Time: ${time}
-💰 Price: ${price.toFixed(4)}
-📈 Trend: ${trend}
-🔗 Symbol: ${symbol}`,
-  };
+function calculateKSJ(data) {
+  const ksValues = [];
+  for (let i = 1; i < data.length; i++) {
+    const priceDiff = data[i].close - data[i - 1].close;
+    const volume = data[i].volume;
+    ksValues.push(priceDiff * volume);
+  }
+  return ksValues;
+}
+
+function calculateVolumeTrend(data) {
+  const volumes = data.map(c => c.volume);
+  const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+  return volumes[volumes.length - 1] > avgVol ? 1 : -1;
+}
+
+async function sendDiscordMessage(message) {
   try {
-    await axios.post(webhookUrl, msg);
-    console.log(`✅ Sent ${type} signal for ${symbol}`);
+    await axios.post(webhookUrl, { content: message });
+    console.log('✅ Signal sent to Discord');
   } catch (err) {
     console.error('❌ Discord Webhook Error:', err.message);
   }
 }
 
-async function checkForSignal(symbol) {
+function getHistoricalPerformance(data, type) {
+  let gains = [], losses = [];
+  for (let i = 0; i < data.length - 10; i++) {
+    const entryPrice = data[i].close;
+    const futurePrice = data[i + 10].close;
+    const change = ((futurePrice - entryPrice) / entryPrice) * 100;
+    if (type === 'BUY' && change > 0) gains.push(change);
+    if (type === 'SELL' && change < 0) losses.push(Math.abs(change));
+  }
+  const expectedGain = gains.length ? (gains.reduce((a, b) => a + b) / gains.length).toFixed(2) : 0;
+  const expectedLoss = losses.length ? (losses.reduce((a, b) => a + b) / losses.length).toFixed(2) : 0;
+  return { expectedGain, expectedLoss };
+}
+
+async function analyzeSymbol(symbol) {
   try {
     const url = `https://api.mexc.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
     const res = await axios.get(url);
@@ -91,63 +121,60 @@ async function checkForSignal(symbol) {
       high: parseFloat(c[2]),
       low: parseFloat(c[3]),
       close: parseFloat(c[4]),
+      volume: parseFloat(c[5]),
     }));
 
-    const atrValues = calculateATR(candles, atrPeriod);
-    const zlsma = includeZLSMA ? calculateZLSMA(candles, zlsmaLength) : [];
+    const atr = calculateATR(candles, atrPeriod);
+    const rsi = calculateRSI(candles);
+    const ksj = calculateKSJ(candles);
+    const volumeTrend = calculateVolumeTrend(candles);
 
-    const i = candles.length - 1;
-    const slice = candles.slice(i - atrPeriod + 1, i + 1);
-    const closeArr = slice.map(c => c.close);
-    const atr = atrMultiplier * atrValues[i];
+    const closePrices = candles.map(c => c.close);
+    const trend = closePrices[closePrices.length - 1] > closePrices[0] ? 'UPWARD' : 'DOWNWARD';
+    const currentPrice = closePrices[closePrices.length - 1];
 
-    const high = useClose ? highest(closeArr, atrPeriod) : highest(slice.map(c => c.high), atrPeriod);
-    const low = useClose ? lowest(closeArr, atrPeriod) : lowest(slice.map(c => c.low), atrPeriod);
+    let points = 0;
+    let reasons = [];
 
-    let longStop = high - atr;
-    let shortStop = low + atr;
-
-    const prevState = state[symbol] || {
-      dir: 1,
-      longStopPrev: null,
-      shortStopPrev: null
-    };
-
-    if (prevState.longStopPrev !== null && candles[i - 1].close > prevState.longStopPrev)
-      longStop = Math.max(longStop, prevState.longStopPrev);
-    if (prevState.shortStopPrev !== null && candles[i - 1].close < prevState.shortStopPrev)
-      shortStop = Math.min(shortStop, prevState.shortStopPrev);
-
-    let newDir = prevState.dir;
-    if (prevState.shortStopPrev !== null && candles[i].close > prevState.shortStopPrev) newDir = 1;
-    else if (prevState.longStopPrev !== null && candles[i].close < prevState.longStopPrev) newDir = -1;
-
-    const startPrice = candles[0].close;
-    const endPrice = candles[i].close;
-    const trend = endPrice > startPrice ? '📈 Upward' : '📉 Downward';
-
-    if (newDir === 1 && prevState.dir === -1) {
-      await sendDiscordMessage("BUY", endPrice, candles[i].time, symbol, trend);
-    } else if (newDir === -1 && prevState.dir === 1) {
-      await sendDiscordMessage("SELL", endPrice, candles[i].time, symbol, trend);
+    const rsiVal = rsi[rsi.length - 1];
+    if ((trend === 'UPWARD' && rsiVal > 55) || (trend === 'DOWNWARD' && rsiVal < 45)) {
+      points++;
+      reasons.push(`RSI confirms trend: ${rsiVal.toFixed(2)}`);
     }
 
-    state[symbol] = {
-      dir: newDir,
-      longStopPrev: longStop,
-      shortStopPrev: shortStop
-    };
+    const ksjSignal = ksj.slice(-10).reduce((a, b) => a + b, 0);
+    if ((ksjSignal > 0 && trend === 'UPWARD') || (ksjSignal < 0 && trend === 'DOWNWARD')) {
+      points++;
+      reasons.push(`KSJ supports trend: ${ksjSignal.toFixed(2)}`);
+    }
 
+    if ((volumeTrend > 0 && trend === 'UPWARD') || (volumeTrend < 0 && trend === 'DOWNWARD')) {
+      points++;
+      reasons.push(`Volume Trend: ${volumeTrend > 0 ? 'High' : 'Low'}`);
+    }
+
+    const signal = trend === 'UPWARD' ? 'BUY' : 'SELL';
+    const { expectedGain, expectedLoss } = getHistoricalPerformance(candles, signal);
+
+    if (points >= 2) {
+      const message = `📊 **${symbol} Signal Alert**\n\n` +
+        `**Signal:** ${signal}\n` +
+        `**Strength:** ${points}/3 ✅\n` +
+        `**Reasons:**\n- ${reasons.join('\n- ')}\n` +
+        `**Expected Gain:** ${expectedGain}% 📈\n` +
+        `**Expected Loss:** ${expectedLoss}% 📉\n` +
+        `**Current Price:** ${currentPrice.toFixed(4)} 💰\n` +
+        `**Trend:** ${trend}`;
+      await sendDiscordMessage(message);
+    }
   } catch (err) {
-    console.error(`❌ Error for ${symbol}:`, err.message);
+    console.error(`Error analyzing ${symbol}:`, err.message);
   }
 }
 
-async function runBot() {
-  console.log('🚀 Bot started...');
+// Run all symbols
+(async () => {
   for (const symbol of symbols) {
-    checkForSignal(symbol);
+    await analyzeSymbol(symbol);
   }
-}
-setInterval(runBot, 60 * 1000); // Every 1 minute
-runBot(); // Initial call
+})();
