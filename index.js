@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const symbols = ['XRPUSDT', 'ICPUSDT', 'APTUSDT', 'SOLUSDT', 'BNBUSDT','SUIUSDT','HBARUSDT'];
+const symbols = ['XRPUSDT', 'ICPUSDT', 'APTUSDT', 'SOLUSDT', 'BNBUSDT', 'SUIUSDT', 'HBARUSDT'];
 const interval = '5m';
 const limit = 500;
 const atrPeriod = 1;
@@ -10,12 +10,6 @@ const zlsmaLength = 50;
 const includeZLSMA = true;
 
 const webhookUrl = 'https://discord.com/api/webhooks/1322193887003148308/MmkpxxH5XcYYgiCnUAKI0tokZq0XwDJ9x1vU0t93KvZndhDoCIZOkeBS71mRuLnmtuL2';
-
-
-
-
-
-
 
 const state = {};
 
@@ -72,13 +66,7 @@ function calculateZLSMA(data, length) {
 
 async function sendDiscordMessage(type, price, time, symbol, trend) {
   const msg = {
-    content: `📢 **${type} Signal**
-🕒 Time: ${time}
-💰 Price: ${price.toFixed(4)}
-📈 Trend: ${trend}
-🔗 Symbol: ${symbol}
-__________________
-🔴 Live`,
+    content: `\uD83D\uDCE2 **${type} Signal**\n\uD83D\uDD52 Time: ${time}\n\uD83D\uDCB0 Price: ${price.toFixed(4)}\n\uD83D\uDCC8 Trend: ${trend}\n\uD83D\uDD17 Symbol: ${symbol}\n__________________\n\uD83D\uDD34 Live`,
   };
   try {
     await axios.post(webhookUrl, msg);
@@ -99,6 +87,7 @@ async function checkForSignal(symbol) {
       high: parseFloat(c[2]),
       low: parseFloat(c[3]),
       close: parseFloat(c[4]),
+      volume: parseFloat(c[5]),
     }));
 
     const atrValues = calculateATR(candles, atrPeriod);
@@ -130,14 +119,23 @@ async function checkForSignal(symbol) {
     if (prevState.shortStopPrev !== null && candles[i].close > prevState.shortStopPrev) newDir = 1;
     else if (prevState.longStopPrev !== null && candles[i].close < prevState.longStopPrev) newDir = -1;
 
-    const startPrice = candles[0].close;
-    const endPrice = candles[i].close;
-    const trend = endPrice > startPrice ? '📈 Upward' : '📉 Downward';
+    const avgVolume = candles.slice(i - 20, i).reduce((sum, c) => sum + c.volume, 0) / 20;
+    const currentVolume = candles[i].volume;
+    const volumeRatio = currentVolume / avgVolume;
+
+    const range = candles[i].high - candles[i].low;
+    const potentialMovePercent = ((atr / candles[i].close) * 100).toFixed(2);
+
+    const entryPrice = candles[i].close;
+    const stopLoss = newDir === 1 ? entryPrice - atr : entryPrice + atr;
+    const takeProfit = newDir === 1 ? entryPrice + 2 * atr : entryPrice - 2 * atr;
+
+    const trend = candles[i].close > candles[0].close ? '📈 Upward' : '📉 Downward';
 
     if (newDir === 1 && prevState.dir === -1) {
-      await sendDiscordMessage("BUY", endPrice, candles[i].time, symbol, trend);
+      await sendDiscordMessage("BUY", entryPrice, candles[i].time, symbol, `${trend} | 📊 Vol x${volumeRatio.toFixed(2)} | 📉 SL: ${stopLoss.toFixed(4)} | 📈 TP: ${takeProfit.toFixed(4)} | 📌 Move: ${potentialMovePercent}%`);
     } else if (newDir === -1 && prevState.dir === 1) {
-      await sendDiscordMessage("SELL", endPrice, candles[i].time, symbol, trend);
+      await sendDiscordMessage("SELL", entryPrice, candles[i].time, symbol, `${trend} | 📊 Vol x${volumeRatio.toFixed(2)} | 📉 SL: ${stopLoss.toFixed(4)} | 📈 TP: ${takeProfit.toFixed(4)} | 📌 Move: ${potentialMovePercent}%`);
     }
 
     state[symbol] = {
